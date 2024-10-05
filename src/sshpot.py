@@ -2,51 +2,52 @@ import paramiko
 import socket
 import threading
 
+#basic configuration
+SSH_KEY = paramiko.RSAKey.generate(2048)  
+SERVER_IP = '0.0.0.0' 
+SERVER_PORT = 2222 
 
 
-SSH_KEY = paramiko.RSAKey.generate(2048)  #Generating RSA key
-SERVER_IP = '0.0.0.0' #Listening on all avaliable network interfaces
-SERVER_PORT = 2222 #Listening on port 2222
-
-class SSHHoneypot(paramiko.ServerInterface):
+class SSHemulation(paramiko.ServerInterface):
     def __init__(self):
         self.event = threading.Event()
-
-    def check_channel_request(self, kind, chanid):
-        if kind == 'session':
-            return paramiko.OPEN_SUCCEEDED
-        return paramiko.OPEN_FAILED_ADMINISTRATIVELY_PROHIBITED
-
+    
     def check_auth_password(self, username, password):
-        print(f"[INFO] Próba logowania: {username}:{password}")
-        return paramiko.AUTH_FAILED  # Zawsze odrzuca logowanie
+        log_attempt(username, password, self.client_ip)
+        return paramiko.AUTH_FAILED
+
+
+def log_attempt(username, password, client_ip):
+    with open('login_info.txt', 'a') as log_file:
+        log_file.write(f"Login attempt from {client_ip} - Username: {username}, Password: {password}\n")
+    print(f"[INFO] Logging attempt from {client_ip}: {username}:{password}")
 
 def handle_connection(client, address):
     transport = paramiko.Transport(client)
-    transport.add_server_key(HOST_KEY)
-    server = SSHHoneypot()
+    transport.add_server_key(SSH_KEY)
+    server = SSHemulation()
 
     try:
         transport.start_server(server=server)
-        chan = transport.accept(20)
-        if chan is None:
+        channel = transport.accept(20)
+        if channel is None:
             raise Exception("Kanał połączenia nie został zaakceptowany.")
-        chan.close()
+        channel.close()
     except Exception as e:
         print(f"[ERROR] Błąd podczas obsługi połączenia: {str(e)}")
 
 def start_honeypot():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((BIND_IP, BIND_PORT))
+    server_socket.bind((SERVER_IP, SERVER_PORT))
     server_socket.listen(100)
 
-    print(f"[INFO] SSH Honeypot nasłuchuje na {BIND_IP}:{BIND_PORT}")
+    print(f"[INFO] SSHPOT Listening on {SERVER_IP}:{SERVER_PORT}")
 
     while True:
-        client, address = server_socket.accept()
-        print(f"[INFO] Połączenie od {address}")
-        threading.Thread(target=handle_connection, args=(client, address)).start()
+        client_socket, client_address = server_socket.accept()
+        print(f"[INFO] Connection from {client_address}")
+        threading.Thread(target=handle_connection, args=(client_socket, client_address)).start()
 
 if __name__ == "__main__":
     start_honeypot()
