@@ -1,11 +1,13 @@
 import paramiko
 import socket
 import threading
+import datetime
 
 #basic configuration
 SSH_KEY = paramiko.RSAKey.generate(2048)  
 SERVER_IP = '0.0.0.0' 
-SERVER_PORT = 2222 
+SERVER_PORT = 2222
+INTERACTION_MODE = 'medium'
 
 
 class SSHemulation(paramiko.ServerInterface):
@@ -14,27 +16,63 @@ class SSHemulation(paramiko.ServerInterface):
     
     def check_auth_password(self, username, password):
         log_attempt(username, password, self.client_ip)
-        return paramiko.AUTH_FAILED
+        return paramiko.AUTH_SUCCESSFUL if INTERACTION_MODE == 'medium' else paramiko.AUTH_FAILED
 
-
+#logging connection attempts
 def log_attempt(username, password, client_ip):
+    time_of_attempt = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     with open('login_info.txt', 'a') as log_file:
-        log_file.write(f"Login attempt from {client_ip} - Username: {username}, Password: {password}\n")
-    print(f"[INFO] Logging attempt from {client_ip}: {username}:{password}")
+        log_file.write(f"[{time_of_attempt}] Login attempt from {client_ip} - Username: {username}, Password: {password}\n")
+    print(f"[INFO] [{time_of_attempt}] Logging attempt from {client_ip}: {username}:{password}")
 
+#logging shell commands
+def log_command(command, client_ip):
+    time_of_command = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    with open('commands_log.txt', 'a') as log_file:
+        log_file.write(f"[{time_of_command}] Command from {client_ip}: {command}\n")
+    print(f"[INFO] [{time_of_command}] Command from {client_ip}: {command}")
+
+
+def emulate_shell(channel, client_ip):
+    channel.send("Welcome to fake SSH server!\n")
+    try:
+        while True:
+            channel.send("$ ")
+            command = channel.recv(1024).decode('utf-8').strip()
+            if not command:
+                continue
+            if command.lower() in ['exit', 'logout']:
+                channel.send("Logging out...\n")
+                break
+            log_command(command, client_ip)
+            channel.send(f"Command '{command}' not found.\n")
+    except Exception as e:
+        print(f"[ERROR] Shell error: {str(e)}")
+    finally:
+        channel.close() 
+
+#handling connections
 def handle_connection(client, address):
+    client_ip = address[0]
     transport = paramiko.Transport(client)
     transport.add_server_key(SSH_KEY)
-    server = SSHemulation()
+    server = SSHemulation(client_ip)
 
     try:
         transport.start_server(server=server)
         channel = transport.accept(20)
         if channel is None:
-            raise Exception("Kanał połączenia nie został zaakceptowany.")
-        channel.close()
+            raise Exception("Connection channel not accepted.")
+        
+        if INTERACTION_MODE == 'medium':
+            emulate_shell(channel, client_ip)
+        else:
+            channel.close()
     except Exception as e:
-        print(f"[ERROR] Błąd podczas obsługi połączenia: {str(e)}")
+        print(f"[ERROR] Error handling connection: {str(e)}")
+    finally:
+        client.close()
+
 
 def start_honeypot():
     server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
